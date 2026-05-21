@@ -241,6 +241,48 @@ async def list_hours(
         return await c.list_objects("im_hour", query=query, limit=limit)
 
 
+@mcp.tool()
+async def list_absences(
+    owner_id: int | None = None,
+    absence_type_id: int | None = None,
+    absence_status_id: int | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    limit: int = 1000,
+) -> Any:
+    """List employee absences (`im_user_absence`).
+
+    Together with `list_hours`, this reconstructs the data behind the ]po[
+    "monthly hours & absences" report. A date range returns absences that
+    *overlap* the window (so multi-day absences crossing a month boundary are
+    included). Dates are compiled into a quoted SQL `query`.
+
+    Args:
+        owner_id: Employee (user) id.
+        absence_type_id: Category "Intranet Absence Type" id.
+        absence_status_id: Category "Intranet Absence Status" id.
+        start_date: Window start, inclusive (YYYY-MM-DD).
+        end_date: Window end, inclusive (YYYY-MM-DD).
+        limit: Max rows to return (default 1000).
+    """
+    _check_date("start_date", start_date)
+    _check_date("end_date", end_date)
+    clauses: list[str] = []
+    if owner_id is not None:
+        clauses.append(f"owner_id = {int(owner_id)}")
+    if absence_type_id is not None:
+        clauses.append(f"absence_type_id = {int(absence_type_id)}")
+    if absence_status_id is not None:
+        clauses.append(f"absence_status_id = {int(absence_status_id)}")
+    if start_date is not None:
+        clauses.append(f"end_date >= '{start_date}'")
+    if end_date is not None:
+        clauses.append(f"start_date <= '{end_date} 23:59:59'")
+    query = " and ".join(clauses) or None
+    async with _client() as c:
+        return await c.list_objects("im_user_absence", query=query, limit=limit)
+
+
 # ---------------------------------------------------------------------------
 # CRM: companies & users (contacts)
 # ---------------------------------------------------------------------------
