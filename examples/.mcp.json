@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "project-open": {
+      "command": "project-open-mcp",
+      "args": [],
+      "env": {
+        "PO_BASE_URL": "https://po.example.com",
+        "PO_USERNAME": "apiuser",
+        "PO_PASSWORD": "changeme",
+        "PO_ALLOW_WRITES": "false"
+      }
+    }
+  }
+}

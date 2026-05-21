@@ -1,0 +1,25 @@
+[Unit]
+Description=Project-Open MCP server (streamable HTTP, pass-through auth)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Adjust user/paths to your install. The venv must have the package installed
+# (pip install -e . inside /opt/project-open-mcp).
+User=projop
+Group=projop
+WorkingDirectory=/opt/project-open-mcp
+EnvironmentFile=/etc/project-open-mcp/project-open-mcp.env
+ExecStart=/opt/project-open-mcp/.venv/bin/python -m project_open_mcp
+Restart=on-failure
+RestartSec=5
+# Creates/owns /var/log/project-open-mcp for the service user (see PO_LOG_FILE).
+LogsDirectory=project-open-mcp
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

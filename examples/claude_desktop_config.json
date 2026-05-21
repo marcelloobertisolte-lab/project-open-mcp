@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "project-open": {
+      "command": "D:/Prodotti/Soltea/ProjectOpenMCP/run.bat",
+      "env": {
+        "PO_BASE_URL": "https://po.example.com",
+        "PO_USERNAME": "apiuser",
+        "PO_PASSWORD": "changeme",
+        "PO_ALLOW_WRITES": "false"
+      }
+    }
+  }
+}

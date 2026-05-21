@@ -1,0 +1,17 @@
+.env
+.venv/
+venv/
+logs/
+scripts/last_log_result.txt
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+build/
+dist/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.idea/
+.vscode/
+.claude/settings.local.json
