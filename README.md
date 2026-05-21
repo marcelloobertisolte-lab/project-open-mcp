@@ -113,18 +113,60 @@ sudo systemctl restart project-open-mcp
 `install.sh` is idempotent: to update, `sudo git -C /opt/project-open-mcp pull`
 then `sudo deploy/install.sh` again.
 
-### nginx + TLS
+### nginx + TLS (subpath on the existing ]po[ vhost)
 
-The MCP process listens on `127.0.0.1:8181` (8080 is taken by Tomcat on the
-]po[ host). Expose it over HTTPS (Basic auth must not travel in clear). Using a
-dedicated subdomain `mcp.soltea.it`:
+The MCP process listens on `127.0.0.1:8181` (8080 is taken by Tomcat/JasperReports
+on the ]po[ host). It is exposed as a subpath `/mcp` on the existing
+`projectopen.soltea.it` vhost (`/etc/nginx/sites-enabled/default`,
+`server_name _`). Add three location blocks inside that `server { }` (back up
+first; run `nginx -t` before every reload):
+
+```nginx
+# MCP endpoint -> uvicorn. Set PO_MCP_ALLOWED_HOSTS so the forwarded Host passes
+# the SDK's DNS-rebinding check (see project-open-mcp.env).
+location /mcp {
+    proxy_pass http://127.0.0.1:8181;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Connection "";
+    proxy_buffering off;
+    proxy_read_timeout 3600s;
+}
+
+# Static webroot for the ACME http-01 challenge (because `location /` proxies
+# everything to ]po[).
+location /.well-known/acme-challenge/ { root /var/www/html; }
+```
+
+TLS via **acme.sh** (the host's system certbot is too old for ACMEv2 on
+Ubuntu 16.04). Run as a real root shell — acme.sh refuses to run under `sudo`:
 
 ```bash
-# DNS: point mcp.soltea.it -> this server's IP first, then:
-sudo cp /opt/project-open-mcp/deploy/nginx-mcp.conf /etc/nginx/sites-available/mcp.conf
-sudo ln -s /etc/nginx/sites-available/mcp.conf /etc/nginx/sites-enabled/
-sudo certbot --nginx -d mcp.soltea.it     # obtains + wires the TLS cert
-sudo nginx -t && sudo systemctl reload nginx
+sudo -i
+curl https://get.acme.sh | sh -s email=you@example.com
+~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
+~/.acme.sh/acme.sh --issue -d projectopen.soltea.it -w /var/www/html
+mkdir -p /etc/nginx/ssl
+~/.acme.sh/acme.sh --install-cert -d projectopen.soltea.it \
+  --key-file /etc/nginx/ssl/projectopen.key \
+  --fullchain-file /etc/nginx/ssl/projectopen.crt \
+  --reloadcmd "systemctl reload nginx"
+exit
+```
+
+Then add `listen 443 ssl;` + `ssl_certificate`/`ssl_certificate_key` to the same
+server block and reload. acme.sh installs its own renewal cron.
+
+Firewall: the host uses **iptables with `INPUT` policy DROP** (not ufw). Open 443
+with a single rule and persist it (do NOT flush the chain — SSH depends on
+existing rules):
+
+```bash
+iptables -A INPUT -p tcp --dport 443 -j ACCEPT
+iptables-save > /etc/iptables/rules.v4
 ```
 
 Smoke test from the server (initialize handshake):
@@ -134,7 +176,7 @@ curl -s -u 'oberti@soltea.it:<pass>' \
   -H 'Accept: application/json, text/event-stream' \
   -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}' \
-  http://127.0.0.1:8181/mcp
+  https://projectopen.soltea.it/mcp
 ```
 
 ### Connect openclaw (or any HTTP MCP client)
@@ -149,7 +191,7 @@ the agent acts with that user's ]po[ permissions.
   "mcpServers": {
     "project-open": {
       "type": "http",
-      "url": "https://mcp.soltea.it/mcp",
+      "url": "https://projectopen.soltea.it/mcp",
       "headers": { "Authorization": "Basic <base64 user:pass>" }
     }
   }
