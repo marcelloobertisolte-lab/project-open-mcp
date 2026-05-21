@@ -46,7 +46,8 @@ Three layers, each in `src/project_open_mcp/`:
 - `limit=N` is the **only** working row cap, and it makes `total` equal the rows *returned*, not the full match count — a limited response cannot reveal how many more rows exist. List tools default to `limit=100`.
 - The API has **no DELETE** — there are no deletion tools, and timesheet/ticket writes are effectively irreversible via REST.
 - In ]po[, **tasks are sub-projects**: `list_projects` (`im_project`) also returns `im_timesheet_task` rows. Hours are logged against the task via `im_hour.project_id`.
-- Query filters are interpreted as **raw SQL where-clause fragments** (e.g. a date filter must be quoted server-side). Treat filter values as injected SQL.
+- Query filters are interpreted as **raw SQL where-clause fragments**, so an unquoted date is read as arithmetic. Use the `query` param (full quoted where-clause) for dates/ranges — `where`/`order_by` params are ignored. `im_hour` returns oldest-first under a row cap, so without a narrowing `query` you never reach recent rows; `list_hours`/`list_absences` compile validated dates into `query`, and `monthly_hours_by_user` aggregates a month's hours+absences per employee.
+- The `.tcl` reporting pages (`/intranet-reporting/...`) are **not** reachable via Basic auth — they need an OpenACS session login (web login is by **email**, not username) and have no CSV export. Prefer reconstructing report data from the REST objects over scraping those pages.
 
 ## HTTP transport gotcha
 

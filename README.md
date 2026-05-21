@@ -212,6 +212,7 @@ Generate the header value with: `printf 'user:pass' | base64`.
 | `get_task`           | `im_timesheet_task` | Full task record                           |
 | `list_hours`         | `im_hour`           | Filter by user, project, day or date range |
 | `list_absences`      | `im_user_absence`   | Filter by employee, type, date range       |
+| `monthly_hours_by_user` | aggregation      | Per-employee hours + absence days for a month |
 | `list_companies`     | `im_company`        | CRM companies                              |
 | `get_company`        | `im_company`        | Full company record                        |
 | `list_users`         | `user`              | Users / contacts                           |

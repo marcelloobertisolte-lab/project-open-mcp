@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import calendar
 import logging
 import os
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -112,7 +114,14 @@ def _drop_none(d: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in d.items() if v is not None}
 
 
-_DATE_RE = __import__("re").compile(r"^\d{4}-\d{2}-\d{2}$")
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _to_float(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _check_date(label: str, value: str | None) -> None:
@@ -281,6 +290,93 @@ async def list_absences(
     query = " and ".join(clauses) or None
     async with _client() as c:
         return await c.list_objects("im_user_absence", query=query, limit=limit)
+
+
+@mcp.tool()
+async def monthly_hours_by_user(year_month: str) -> Any:
+    """Per-employee monthly summary of logged hours and absence days.
+
+    Server-side aggregation of `im_hour` + `im_user_absence` for a calendar
+    month — the headline numbers of the ]po[ "monthly hours & absences" report,
+    as structured JSON.
+
+    Args:
+        year_month: Month as ``YYYY-MM`` (e.g. ``2026-04``).
+
+    Returns a dict with the month bounds, ``totals``, and ``rows`` (one per
+    employee with hours, absence_days and absence_count). Hours count entries
+    dated within the month; absence_days sum absences *starting* within the
+    month (so a multi-day absence is attributed to its start month, not split).
+    """
+    if not re.match(r"^\d{4}-\d{2}$", year_month):
+        raise ProjectOpenError(f"year_month must be YYYY-MM, got {year_month!r}")
+    year, month = int(year_month[:4]), int(year_month[5:7])
+    if not 1 <= month <= 12:
+        raise ProjectOpenError(f"invalid month in {year_month!r}")
+    last = calendar.monthrange(year, month)[1]
+    start = f"{year_month}-01"
+    end = f"{year_month}-{last:02d}"
+
+    async with _client() as c:
+        hours = await c.list_objects(
+            "im_hour",
+            query=f"day >= '{start}' and day <= '{end} 23:59:59'",
+            limit=100000,
+        )
+        absences = await c.list_objects(
+            "im_user_absence",
+            query=f"start_date >= '{start}' and start_date <= '{end} 23:59:59'",
+            limit=100000,
+        )
+        users = await c.list_objects("user", limit=100000)
+
+    names = {
+        str(u.get("id")): (u.get("object_name") or u.get("title"))
+        for u in (users.get("data") or [])
+    }
+    agg: dict[str, dict[str, Any]] = {}
+
+    def row(uid: str) -> dict[str, Any]:
+        return agg.setdefault(
+            uid,
+            {
+                "user_id": int(uid) if uid.isdigit() else uid,
+                "user_name": names.get(uid),
+                "hours": 0.0,
+                "absence_days": 0.0,
+                "absence_count": 0,
+            },
+        )
+
+    for h in hours.get("data") or []:
+        uid = str(h.get("user_id"))
+        if uid and uid != "None":
+            row(uid)["hours"] += _to_float(h.get("hours"))
+    for a in absences.get("data") or []:
+        uid = str(a.get("owner_id"))
+        if uid and uid != "None":
+            r = row(uid)
+            r["absence_days"] += _to_float(a.get("duration_days"))
+            r["absence_count"] += 1
+
+    rows = sorted(
+        agg.values(), key=lambda r: (r["user_name"] or "").lower() or str(r["user_id"])
+    )
+    for r in rows:
+        r["hours"] = round(r["hours"], 2)
+        r["absence_days"] = round(r["absence_days"], 2)
+
+    return {
+        "year_month": year_month,
+        "start_date": start,
+        "end_date": end,
+        "totals": {
+            "hours": round(sum(r["hours"] for r in rows), 2),
+            "absence_days": round(sum(r["absence_days"] for r in rows), 2),
+            "employees": len(rows),
+        },
+        "rows": rows,
+    }
 
 
 # ---------------------------------------------------------------------------
