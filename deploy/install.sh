@@ -18,6 +18,7 @@ SERVICE_USER="projop"
 ENV_DIR="/etc/project-open-mcp"
 ENV_FILE="${ENV_DIR}/project-open-mcp.env"
 UNIT_DST="/etc/systemd/system/project-open-mcp.service"
+PY_VERSION="3.12"
 
 if [[ $EUID -ne 0 ]]; then
   echo "Please run as root (sudo)." >&2
@@ -46,14 +47,32 @@ if [[ "${PROJECT_ROOT}" != "${INSTALL_DIR}" ]]; then
     "${PROJECT_ROOT}/" "${INSTALL_DIR}/"
 fi
 
-# 3) Virtualenv + install.
-if [[ ! -x "${INSTALL_DIR}/.venv/bin/python" ]]; then
-  echo ">> Creating venv"
-  python3 -m venv "${INSTALL_DIR}/.venv"
+# 3) Modern Python via uv. The host Python (3.5 on Ubuntu 16.04) is too old, so
+#    we provision a standalone CPython under INSTALL_DIR without touching the
+#    system. Everything lives in INSTALL_DIR so the service user can run it.
+if ! command -v curl >/dev/null 2>&1; then
+  echo "curl is required to install uv. Run: sudo apt install -y curl" >&2
+  exit 1
 fi
+
+UV_BIN="/usr/local/bin/uv"
+if [[ ! -x "${UV_BIN}" ]]; then
+  echo ">> Installing uv to /usr/local/bin"
+  curl -LsSf https://astral.sh/uv/install.sh \
+    | env UV_INSTALL_DIR=/usr/local/bin INSTALLER_NO_MODIFY_PATH=1 sh
+fi
+
+export UV_PYTHON_INSTALL_DIR="${INSTALL_DIR}/.python"
+export UV_CACHE_DIR="${INSTALL_DIR}/.uv-cache"
+
+echo ">> Provisioning CPython ${PY_VERSION} via uv"
+"${UV_BIN}" python install "${PY_VERSION}"
+
+echo ">> Creating venv"
+"${UV_BIN}" venv "${INSTALL_DIR}/.venv" --python "${PY_VERSION}"
+
 echo ">> Installing package"
-"${INSTALL_DIR}/.venv/bin/pip" install --upgrade pip >/dev/null
-"${INSTALL_DIR}/.venv/bin/pip" install -e "${INSTALL_DIR}"
+"${UV_BIN}" pip install --python "${INSTALL_DIR}/.venv/bin/python" -e "${INSTALL_DIR}"
 
 # 4) EnvironmentFile (do not overwrite an existing one).
 mkdir -p "${ENV_DIR}"

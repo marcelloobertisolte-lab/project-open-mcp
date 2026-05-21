@@ -1,6 +1,8 @@
 .env
 .venv/
 venv/
+.python/
+.uv-cache/
 logs/
 scripts/last_log_result.txt
 __pycache__/

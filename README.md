@@ -90,15 +90,19 @@ Deployment artifacts are in `deploy/`:
 
 ### Install on the ]po[ host (git clone)
 
+The host Python may be too old (e.g. Ubuntu 16.04 ships Python 3.5). `install.sh`
+provisions a standalone CPython 3.12 via [uv](https://docs.astral.sh/uv/),
+under `/opt/project-open-mcp/.python`, without touching the system Python.
+
 ```bash
-# 1. Prerequisites
-sudo apt update && sudo apt install -y git python3 python3-venv rsync
+# 1. Prerequisites (uv brings its own Python; we just need git + curl)
+sudo apt update && sudo apt install -y git curl rsync
 
 # 2. Get the code
 sudo git clone <REPO_URL> /opt/project-open-mcp
 cd /opt/project-open-mcp
 
-# 3. Install service (creates user, venv, EnvironmentFile, systemd unit, starts it)
+# 3. Install service (uv+venv, user, EnvironmentFile, systemd unit, starts it)
 sudo deploy/install.sh
 
 # 4. Edit the EnvironmentFile if needed (PO_BASE_URL, PO_ALLOW_WRITES, ...)
