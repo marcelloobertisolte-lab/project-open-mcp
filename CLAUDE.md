@@ -37,7 +37,7 @@ Three layers, each in `src/project_open_mcp/`:
 
 **Credential model (important):** stdio acts as the single `PO_USERNAME`/`PO_PASSWORD` account. HTTP is **pass-through**: each request's Basic credentials are reused for that request's REST calls, giving per-user ]po[ permissions — there is **no service account** in HTTP mode, so `PO_USERNAME`/`PO_PASSWORD` are not set on the server.
 
-**Writes** (`log_hours`, `create_task`, `create_ticket`, `update_ticket`) are gated by `PO_ALLOW_WRITES=true`; read tools are always on.
+**Writes** (`log_hours`, `create_project`, `update_project`, `create_task`, `update_task`, `create_ticket`, `update_ticket`) are gated by `PO_ALLOW_WRITES=true`; read tools are always on. Projects and tasks share the `im_project` schema — a task is an `im_timesheet_task` with `parent_id` set, its name sent as `project_name`. There is no DELETE: "remove" by setting status to Deleted (82).
 
 ## ]po[ REST behaviours that are not obvious (and shape the code)
 

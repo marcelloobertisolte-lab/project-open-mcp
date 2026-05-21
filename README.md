@@ -220,15 +220,23 @@ Generate the header value with: `printf 'user:pass' | base64`.
 
 ### Write (require `PO_ALLOW_WRITES=true`)
 
-| Tool                 | Project-Open object | Operation               |
-|----------------------|---------------------|-------------------------|
-| `log_hours`          | `im_hour`           | Create a timesheet entry|
-| `create_task`        | `im_timesheet_task` | Create a task on project|
-| `create_ticket`      | `im_ticket`         | Open a new ticket       |
-| `update_ticket`      | `im_ticket`         | Update fields (status…) |
+| Tool             | Project-Open object | Operation                              |
+|------------------|---------------------|----------------------------------------|
+| `log_hours`      | `im_hour`           | Create a timesheet entry               |
+| `create_project` | `im_project`        | Create a project                       |
+| `update_project` | `im_project`        | Update fields (status, lead, dates…)   |
+| `create_task`    | `im_timesheet_task` | Create a task under a project          |
+| `update_task`    | `im_timesheet_task` | Update fields (status, %, parent…)     |
+| `create_ticket`  | `im_ticket`         | Open a new ticket                      |
+| `update_ticket`  | `im_ticket`         | Update fields (status…)                |
 
-The Project-Open REST API does **not** support DELETE, so this server also
-does not expose any deletion tools.
+The Project-Open REST API does **not** support DELETE, so there are no deletion
+tools. To retract a project/task, set its status to **Deleted (82)** via
+`update_project` / `update_task`.
+
+Useful category ids (verify per instance): project status 76 Open, 81 Closed,
+82 Deleted, 83 Canceled; project type 97 Strategic Consulting, 98 Software
+Maintenance, 99 Software Development, 2501 Gantt, 100 Task.
 
 ## Logging
 

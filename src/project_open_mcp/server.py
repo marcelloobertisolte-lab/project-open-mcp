@@ -342,31 +342,185 @@ async def log_hours(
 
 
 @mcp.tool()
-async def create_task(
+async def create_project(
+    project_name: str,
+    company_id: int,
+    project_nr: str | None = None,
+    parent_id: int | None = None,
+    project_type_id: int = 97,
+    project_status_id: int = 76,
+    project_lead_id: int | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    description: str | None = None,
+) -> Any:
+    """Create a project (`im_project`).
+
+    Requires ``PO_ALLOW_WRITES=true``. Note: ]po[ has no DELETE — to retract a
+    project set its status to Deleted (82) via update_project.
+
+    Args:
+        project_name: Display name.
+        company_id: Customer/company id (e.g. the internal company).
+        project_nr: Unique project number. Some instances require it; if your
+            ]po[ auto-generates numbers you may omit it.
+        parent_id: Parent project id for a sub-project; omit for top-level.
+        project_type_id: Category "Intranet Project Type". Common: 97 Strategic
+            Consulting, 98 Software Maintenance, 99 Software Development,
+            2501 Gantt Project.
+        project_status_id: Category "Intranet Project Status". Common: 76 Open,
+            81 Closed, 82 Deleted, 83 Canceled.
+        project_lead_id: Responsible user id.
+        start_date: ISO date (YYYY-MM-DD).
+        end_date: ISO date (YYYY-MM-DD).
+        description: Free text.
+    """
+    _require_writes("create_project", project_name=project_name, company_id=company_id)
+    async with _client() as c:
+        return await c.create_object(
+            "im_project",
+            _drop_none(
+                {
+                    "project_name": project_name,
+                    "company_id": company_id,
+                    "project_nr": project_nr,
+                    "parent_id": parent_id,
+                    "project_type_id": project_type_id,
+                    "project_status_id": project_status_id,
+                    "project_lead_id": project_lead_id,
+                    "start_date": start_date,
+                    "end_date": end_date,
+                    "description": description,
+                }
+            ),
+        )
+
+
+@mcp.tool()
+async def update_project(
     project_id: int,
+    project_name: str | None = None,
+    project_status_id: int | None = None,
+    project_type_id: int | None = None,
+    project_lead_id: int | None = None,
+    parent_id: int | None = None,
+    percent_completed: int | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    description: str | None = None,
+    note: str | None = None,
+) -> Any:
+    """Update a project (`im_project`). Only provided fields are sent.
+
+    Requires ``PO_ALLOW_WRITES=true``. To "delete" a project set
+    ``project_status_id=82`` (Deleted) — ]po[ has no REST DELETE.
+    """
+    _require_writes("update_project", project_id=project_id)
+    attrs = _drop_none(
+        {
+            "project_name": project_name,
+            "project_status_id": project_status_id,
+            "project_type_id": project_type_id,
+            "project_lead_id": project_lead_id,
+            "parent_id": parent_id,
+            "percent_completed": percent_completed,
+            "start_date": start_date,
+            "end_date": end_date,
+            "description": description,
+            "note": note,
+        }
+    )
+    if not attrs:
+        raise ProjectOpenError("update_project called with no fields to update.")
+    async with _client() as c:
+        return await c.update_object("im_project", project_id, attrs)
+
+
+@mcp.tool()
+async def create_task(
+    parent_id: int,
     task_name: str,
-    task_nr: str | None = None,
+    project_nr: str | None = None,
+    company_id: int | None = None,
     planned_units: float | None = None,
     uom_id: int | None = None,
+    percent_completed: int | None = None,
+    project_status_id: int = 76,
+    project_type_id: int = 100,
+    description: str | None = None,
 ) -> Any:
-    """Create a timesheet task (`im_timesheet_task`) on a project.
+    """Create a timesheet task (`im_timesheet_task`) under a project.
 
-    Requires ``PO_ALLOW_WRITES=true``.
+    A task is an `im_project` subtype, so its name is sent as ``project_name``
+    and its parent project as ``parent_id``. Requires ``PO_ALLOW_WRITES=true``.
+
+    Args:
+        parent_id: Project (or task) this task hangs under.
+        task_name: Task name (stored as project_name).
+        project_nr: Unique task number; may be required by your instance.
+        company_id: Customer id; usually the parent project's company.
+        planned_units: Planned effort (in the task's unit of measure).
+        uom_id: Unit of measure id (e.g. hours).
+        percent_completed: 0-100.
+        project_status_id: 76 Open / 81 Closed / 82 Deleted.
+        project_type_id: 100 = Task.
+        description: Free text.
     """
-    _require_writes("create_task", project_id=project_id, task_name=task_name)
+    _require_writes("create_task", parent_id=parent_id, task_name=task_name)
     async with _client() as c:
         return await c.create_object(
             "im_timesheet_task",
             _drop_none(
                 {
-                    "project_id": project_id,
-                    "task_name": task_name,
-                    "task_nr": task_nr,
+                    "parent_id": parent_id,
+                    "project_name": task_name,
+                    "project_nr": project_nr,
+                    "company_id": company_id,
                     "planned_units": planned_units,
                     "uom_id": uom_id,
+                    "percent_completed": percent_completed,
+                    "project_status_id": project_status_id,
+                    "project_type_id": project_type_id,
+                    "description": description,
                 }
             ),
         )
+
+
+@mcp.tool()
+async def update_task(
+    task_id: int,
+    task_name: str | None = None,
+    project_status_id: int | None = None,
+    parent_id: int | None = None,
+    planned_units: float | None = None,
+    percent_completed: int | None = None,
+    deadline_date: str | None = None,
+    description: str | None = None,
+    note: str | None = None,
+) -> Any:
+    """Update a timesheet task (`im_timesheet_task`). Only provided fields sent.
+
+    Requires ``PO_ALLOW_WRITES=true``. ``task_name`` maps to ``project_name``;
+    set ``parent_id`` to move the task under a different project.
+    """
+    _require_writes("update_task", task_id=task_id)
+    attrs = _drop_none(
+        {
+            "project_name": task_name,
+            "project_status_id": project_status_id,
+            "parent_id": parent_id,
+            "planned_units": planned_units,
+            "percent_completed": percent_completed,
+            "deadline_date": deadline_date,
+            "description": description,
+            "note": note,
+        }
+    )
+    if not attrs:
+        raise ProjectOpenError("update_task called with no fields to update.")
+    async with _client() as c:
+        return await c.update_object("im_timesheet_task", task_id, attrs)
 
 
 @mcp.tool()
