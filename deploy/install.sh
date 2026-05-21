@@ -84,10 +84,16 @@ else
   echo ">> Keeping existing ${ENV_FILE}"
 fi
 
-# 5) Ownership.
+# 5) Log directory. systemd LogsDirectory= is unsupported on old systemd
+#    (e.g. Ubuntu 16.04 ships systemd 229; it landed in 235), so create it here.
+LOG_DIR="/var/log/project-open-mcp"
+mkdir -p "${LOG_DIR}"
+chown -R "${SERVICE_USER}:${SERVICE_USER}" "${LOG_DIR}"
+
+# 6) Ownership of the install tree.
 chown -R "${SERVICE_USER}:${SERVICE_USER}" "${INSTALL_DIR}"
 
-# 6) systemd unit.
+# 7) systemd unit.
 echo ">> Installing systemd unit"
 cp "${INSTALL_DIR}/deploy/project-open-mcp.service" "${UNIT_DST}"
 systemctl daemon-reload
@@ -97,11 +103,11 @@ echo
 echo ">> Service status:"
 systemctl --no-pager --full status project-open-mcp || true
 echo
-echo ">> Done. The MCP server listens on 127.0.0.1:8080 (endpoint /mcp)."
+echo ">> Done. The MCP server listens on 127.0.0.1:8181 (endpoint /mcp)."
 echo ">> Next: configure nginx + TLS (deploy/nginx-mcp.conf) so openclaw can"
 echo ">> reach https://<host>/mcp. Smoke test locally:"
 echo "     curl -s -u '<po_user>:<po_pass>' \\"
 echo "       -H 'Accept: application/json, text/event-stream' \\"
 echo "       -H 'Content-Type: application/json' \\"
 echo "       -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{},\"clientInfo\":{\"name\":\"curl\",\"version\":\"0\"}}}' \\"
-echo "       http://127.0.0.1:8080/mcp"
+echo "       http://127.0.0.1:8181/mcp"

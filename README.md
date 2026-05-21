@@ -115,8 +115,9 @@ then `sudo deploy/install.sh` again.
 
 ### nginx + TLS
 
-The MCP process listens on `127.0.0.1:8080`. Expose it over HTTPS (Basic auth
-must not travel in clear). Using a dedicated subdomain `mcp.soltea.it`:
+The MCP process listens on `127.0.0.1:8181` (8080 is taken by Tomcat on the
+]po[ host). Expose it over HTTPS (Basic auth must not travel in clear). Using a
+dedicated subdomain `mcp.soltea.it`:
 
 ```bash
 # DNS: point mcp.soltea.it -> this server's IP first, then:
@@ -133,7 +134,7 @@ curl -s -u 'oberti@soltea.it:<pass>' \
   -H 'Accept: application/json, text/event-stream' \
   -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}' \
-  http://127.0.0.1:8080/mcp
+  http://127.0.0.1:8181/mcp
 ```
 
 ### Connect openclaw (or any HTTP MCP client)

@@ -42,13 +42,19 @@ def setup_logging() -> logging.Logger:
 
     log_file = os.environ.get("PO_LOG_FILE", "logs/project-open-mcp.log")
     if log_file:
-        path = Path(log_file)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        file_handler = RotatingFileHandler(
-            path, maxBytes=2_000_000, backupCount=5, encoding="utf-8"
-        )
-        file_handler.setFormatter(formatter)
-        root.addHandler(file_handler)
+        # A bad/unwritable log path must never crash the server: fall back to
+        # stderr-only logging and warn instead.
+        try:
+            path = Path(log_file)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            file_handler = RotatingFileHandler(
+                path, maxBytes=2_000_000, backupCount=5, encoding="utf-8"
+            )
+            file_handler.setFormatter(formatter)
+            root.addHandler(file_handler)
+        except OSError as exc:
+            log_file = f"<file disabled: {exc}>"
+            root.warning("Could not open log file (%s); logging to stderr only", exc)
 
     # httpcore is extremely chatty; keep it quiet unless we are debugging.
     logging.getLogger("httpcore").setLevel(

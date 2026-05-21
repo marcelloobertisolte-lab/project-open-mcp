@@ -14,8 +14,8 @@ EnvironmentFile=/etc/project-open-mcp/project-open-mcp.env
 ExecStart=/opt/project-open-mcp/.venv/bin/python -m project_open_mcp
 Restart=on-failure
 RestartSec=5
-# Creates/owns /var/log/project-open-mcp for the service user (see PO_LOG_FILE).
-LogsDirectory=project-open-mcp
+# NB: /var/log/project-open-mcp is created by install.sh, not via LogsDirectory=
+# (that directive needs systemd >= 235; Ubuntu 16.04 ships 229).
 # Hardening
 NoNewPrivileges=true
 PrivateTmp=true
