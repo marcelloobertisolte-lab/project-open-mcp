@@ -112,6 +112,20 @@ def _drop_none(d: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in d.items() if v is not None}
 
 
+_DATE_RE = __import__("re").compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _check_date(label: str, value: str | None) -> None:
+    """Reject anything that isn't a plain YYYY-MM-DD before it reaches SQL.
+
+    ]po[ filters are interpolated into a raw SQL where-clause, so date values
+    must be validated (both to avoid an unquoted date being read as arithmetic
+    and to bound the injection surface).
+    """
+    if value is not None and not _DATE_RE.match(value):
+        raise ProjectOpenError(f"{label} must be an ISO date (YYYY-MM-DD), got {value!r}")
+
+
 # ---------------------------------------------------------------------------
 # Projects & tasks
 # ---------------------------------------------------------------------------
@@ -189,27 +203,42 @@ async def list_hours(
     user_id: int | None = None,
     project_id: int | None = None,
     day: str | None = None,
-    limit: int = DEFAULT_LIST_LIMIT,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    limit: int = 1000,
 ) -> Any:
     """List timesheet entries (`im_hour`).
 
-    This object type can be very large; always filter. With ``limit`` set, ]po[
-    reports ``total`` as the number of rows returned, not the full match count.
+    ]po[ returns `im_hour` oldest-first and caps the result set, so an unfiltered
+    query never reaches recent rows. **Filter by date to reach a given period.**
+    Date filters are compiled into a proper SQL `query` (quoted), so they work
+    for any year — pass either a single `day` or a `start_date`/`end_date` range.
 
     Args:
         user_id: Filter by employee id.
         project_id: Filter by project id.
-        day: Filter by day in ISO format (YYYY-MM-DD).
-        limit: Max rows to return.
+        day: Single day (YYYY-MM-DD).
+        start_date: Range start, inclusive (YYYY-MM-DD).
+        end_date: Range end, inclusive (YYYY-MM-DD).
+        limit: Max rows to return (default 1000).
     """
+    _check_date("day", day)
+    _check_date("start_date", start_date)
+    _check_date("end_date", end_date)
+    clauses: list[str] = []
+    if user_id is not None:
+        clauses.append(f"user_id = {int(user_id)}")
+    if project_id is not None:
+        clauses.append(f"project_id = {int(project_id)}")
+    if day is not None:
+        clauses.append(f"day = '{day}'")
+    if start_date is not None:
+        clauses.append(f"day >= '{start_date}'")
+    if end_date is not None:
+        clauses.append(f"day <= '{end_date} 23:59:59'")
+    query = " and ".join(clauses) or None
     async with _client() as c:
-        return await c.list_objects(
-            "im_hour",
-            filters=_drop_none(
-                {"user_id": user_id, "project_id": project_id, "day": day}
-            ),
-            limit=limit,
-        )
+        return await c.list_objects("im_hour", query=query, limit=limit)
 
 
 # ---------------------------------------------------------------------------

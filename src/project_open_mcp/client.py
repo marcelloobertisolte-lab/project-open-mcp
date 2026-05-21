@@ -167,17 +167,22 @@ class ProjectOpenClient:
         object_type: str,
         *,
         filters: dict[str, Any] | None = None,
+        query: str | None = None,
         limit: int | None = None,
     ) -> Any:
         """List objects of ``object_type``.
 
-        ``filters`` are passed as query params. ``limit`` caps the number of
-        rows via the ]po[ ``limit`` parameter. Note: ]po[ sets ``total`` to the
-        number of rows *returned*, so a limited response does not reveal how
-        many more rows would match — re-query without a limit (or filter) to
-        learn the true count.
+        ``filters`` are individual ``col=value`` params (each becomes a raw SQL
+        equality, so values are NOT auto-quoted). ``query`` is a full SQL
+        where-clause fragment (e.g. ``day >= '2026-01-01'``) — the right tool for
+        dates, ranges, and reaching beyond the row cap by narrowing the set.
+        ``limit`` caps rows; ]po[ sets ``total`` to the rows *returned*, and
+        results come oldest-first, so without a narrowing ``query`` a capped
+        response never reaches recent rows.
         """
         params = dict(filters or {})
+        if query:
+            params["query"] = query
         if limit is not None:
             params["limit"] = limit
         return await self._request("GET", f"/{object_type}", params=params)
