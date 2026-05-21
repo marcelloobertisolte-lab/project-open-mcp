@@ -91,6 +91,21 @@ async def _send_401(send, message: str) -> None:
     await send({"type": "http.response.body", "body": body})
 
 
+async def _send_ok(send) -> None:
+    body = b'{"status": "ok"}'
+    await send(
+        {
+            "type": "http.response.start",
+            "status": 200,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(body)).encode("ascii")),
+            ],
+        }
+    )
+    await send({"type": "http.response.body", "body": body})
+
+
 class PassThroughAuthMiddleware:
     """Pure ASGI middleware enforcing ]po[-delegated Basic auth on HTTP requests."""
 
@@ -100,6 +115,13 @@ class PassThroughAuthMiddleware:
     async def __call__(self, scope, receive, send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
+            return
+
+        # Unauthenticated liveness probe: GET .../healthz -> 200 (no ]po[ call).
+        if scope.get("method") == "GET" and scope.get("path", "").rstrip("/").endswith(
+            "/healthz"
+        ):
+            await _send_ok(send)
             return
 
         headers = {k.lower(): v for k, v in scope.get("headers", [])}

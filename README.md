@@ -200,6 +200,11 @@ the agent acts with that user's ]po[ permissions.
 
 Generate the header value with: `printf 'user:pass' | base64`.
 
+**Health check:** `GET https://projectopen.soltea.it/mcp/healthz` returns
+`200 {"status":"ok"}` **without** authentication, for liveness pings/monitoring.
+Every other path on `/mcp` requires Basic auth (an unauthenticated request gets
+`401`, which still proves the server is reachable).
+
 ## Exposed tools
 
 ### Read (always available)
