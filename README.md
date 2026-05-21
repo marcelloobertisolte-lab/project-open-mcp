@@ -88,22 +88,56 @@ Deployment artifacts are in `deploy/`:
 | `project-open-mcp.service`    | systemd unit                                     |
 | `nginx-mcp.conf`              | nginx TLS reverse proxy (SSE-friendly)           |
 
-Quick Linux setup:
+### Install on the ]po[ host (git clone)
 
 ```bash
-sudo mkdir -p /opt/project-open-mcp && cd /opt/project-open-mcp
-# copy the repo here, then:
-python3 -m venv .venv && .venv/bin/pip install -e .
-sudo mkdir -p /etc/project-open-mcp
-sudo cp deploy/project-open-mcp.env /etc/project-open-mcp/
-sudo cp deploy/project-open-mcp.service /etc/systemd/system/
-sudo cp deploy/nginx-mcp.conf /etc/nginx/conf.d/
-sudo systemctl daemon-reload && sudo systemctl enable --now project-open-mcp
+# 1. Prerequisites
+sudo apt update && sudo apt install -y git python3 python3-venv rsync
+
+# 2. Get the code
+sudo git clone <REPO_URL> /opt/project-open-mcp
+cd /opt/project-open-mcp
+
+# 3. Install service (creates user, venv, EnvironmentFile, systemd unit, starts it)
+sudo deploy/install.sh
+
+# 4. Edit the EnvironmentFile if needed (PO_BASE_URL, PO_ALLOW_WRITES, ...)
+sudo nano /etc/project-open-mcp/project-open-mcp.env
+sudo systemctl restart project-open-mcp
+```
+
+`install.sh` is idempotent: to update, `sudo git -C /opt/project-open-mcp pull`
+then `sudo deploy/install.sh` again.
+
+### nginx + TLS
+
+The MCP process listens on `127.0.0.1:8080`. Expose it over HTTPS (Basic auth
+must not travel in clear). Using a dedicated subdomain `mcp.soltea.it`:
+
+```bash
+# DNS: point mcp.soltea.it -> this server's IP first, then:
+sudo cp /opt/project-open-mcp/deploy/nginx-mcp.conf /etc/nginx/sites-available/mcp.conf
+sudo ln -s /etc/nginx/sites-available/mcp.conf /etc/nginx/sites-enabled/
+sudo certbot --nginx -d mcp.soltea.it     # obtains + wires the TLS cert
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-Clients then connect to `https://<host>/mcp` with an `Authorization: Basic`
-header carrying a ]po[ username/password. Example `.mcp.json`:
+Smoke test from the server (initialize handshake):
+
+```bash
+curl -s -u 'oberti@soltea.it:<pass>' \
+  -H 'Accept: application/json, text/event-stream' \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}' \
+  http://127.0.0.1:8080/mcp
+```
+
+### Connect openclaw (or any HTTP MCP client)
+
+Point the agent at the HTTPS endpoint and send a ]po[ user's credentials as an
+`Authorization: Basic` header (base64 of `user:password`). Those credentials
+authenticate the client *and* become the identity used for the REST calls, so
+the agent acts with that user's ]po[ permissions.
 
 ```json
 {
@@ -116,6 +150,8 @@ header carrying a ]po[ username/password. Example `.mcp.json`:
   }
 }
 ```
+
+Generate the header value with: `printf 'user:pass' | base64`.
 
 ## Exposed tools
 
