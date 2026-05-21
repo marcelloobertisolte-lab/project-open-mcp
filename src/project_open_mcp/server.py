@@ -62,7 +62,15 @@ def _transport_security() -> TransportSecuritySettings | None:
     )
 
 
-mcp = FastMCP("project-open", transport_security=_transport_security())
+mcp = FastMCP(
+    "project-open",
+    transport_security=_transport_security(),
+    # Stateless mode avoids the session-id handshake (a GET /mcp without a
+    # session returns 400 otherwise), which some HTTP MCP clients log as an
+    # error. json_response returns plain JSON instead of SSE. Both default off.
+    stateless_http=os.environ.get("PO_MCP_STATELESS", "false").lower() == "true",
+    json_response=os.environ.get("PO_MCP_JSON_RESPONSE", "false").lower() == "true",
+)
 
 # Default cap on rows returned by list_* tools, to avoid dumping huge result
 # sets (e.g. thousands of im_hour rows) into the model context. ``total`` in
