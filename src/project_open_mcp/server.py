@@ -10,6 +10,7 @@ from typing import Any
 
 from dotenv import find_dotenv, load_dotenv
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 from .auth import current_credentials
 from .client import ClientConfig, ProjectOpenClient, ProjectOpenError
@@ -35,7 +36,31 @@ _load_env()
 setup_logging()
 logger = logging.getLogger(__name__)
 
-mcp = FastMCP("project-open")
+
+def _transport_security() -> TransportSecuritySettings | None:
+    """DNS-rebinding allowlist for the HTTP transport.
+
+    FastMCP defaults to localhost-only, which rejects requests coming through a
+    reverse proxy that forwards the public Host header. Set PO_MCP_ALLOWED_HOSTS
+    (comma-separated hostnames) to permit them; localhost is always allowed too.
+    Returns None when unset so FastMCP keeps its secure localhost-only default.
+    """
+    raw = os.environ.get("PO_MCP_ALLOWED_HOSTS", "").strip()
+    if not raw:
+        return None
+    hosts = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
+    origins = ["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"]
+    for name in (h.strip() for h in raw.split(",") if h.strip()):
+        hosts += [name, f"{name}:*"]
+        origins += [f"https://{name}", f"http://{name}"]
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=hosts,
+        allowed_origins=origins,
+    )
+
+
+mcp = FastMCP("project-open", transport_security=_transport_security())
 
 # Default cap on rows returned by list_* tools, to avoid dumping huge result
 # sets (e.g. thousands of im_hour rows) into the model context. ``total`` in
