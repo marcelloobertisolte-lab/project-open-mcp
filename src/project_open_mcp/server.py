@@ -701,6 +701,7 @@ async def update_task(
 @mcp.tool()
 async def create_ticket(
     ticket_name: str,
+    parent_id: int,
     ticket_customer_id: int,
     ticket_description: str | None = None,
     ticket_type_id: int | None = None,
@@ -709,17 +710,35 @@ async def create_ticket(
 ) -> Any:
     """Open a new helpdesk ticket (`im_ticket`).
 
-    Requires ``PO_ALLOW_WRITES=true``.
+    An `im_ticket` is an `im_project` subtype, so the REST API requires
+    ``project_name`` (mapped here from ``ticket_name``) and ``parent_id`` — the
+    ticket queue / container project the ticket hangs under. Without both, ]po[
+    rejects the create with "The following variables are required:
+    project_name parent_id". Requires ``PO_ALLOW_WRITES=true``.
+
+    Args:
+        ticket_name: Ticket title (stored as project_name).
+        parent_id: Parent project — the ticket queue / container the ticket
+            belongs to.
+        ticket_customer_id: Customer/company the ticket is raised for.
+        ticket_description: Free-text body.
+        ticket_type_id: Category "Intranet Ticket Type".
+        ticket_status_id: Category "Intranet Ticket Status".
+        ticket_assignee_id: User the ticket is assigned to.
     """
     _require_writes(
-        "create_ticket", ticket_name=ticket_name, customer_id=ticket_customer_id
+        "create_ticket",
+        ticket_name=ticket_name,
+        parent_id=parent_id,
+        customer_id=ticket_customer_id,
     )
     async with _client() as c:
         return await c.create_object(
             "im_ticket",
             _drop_none(
                 {
-                    "ticket_name": ticket_name,
+                    "project_name": ticket_name,
+                    "parent_id": parent_id,
                     "ticket_customer_id": ticket_customer_id,
                     "ticket_description": ticket_description,
                     "ticket_type_id": ticket_type_id,
