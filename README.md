@@ -236,6 +236,7 @@ Every other path on `/mcp` requires Basic auth (an unauthenticated request gets
 | `update_task`    | `im_timesheet_task` | Update fields (status, %, parent…)     |
 | `create_ticket`  | `im_ticket`         | Open a new ticket                      |
 | `update_ticket`  | `im_ticket`         | Update fields (status…)                |
+| `attach_ticket_document` | filestorage | Attach a document to a ticket (see below) |
 
 The Project-Open REST API does **not** support DELETE, so there are no deletion
 tools. To retract a project/task, set its status to **Deleted (82)** via
@@ -244,6 +245,42 @@ tools. To retract a project/task, set its status to **Deleted (82)** via
 Useful category ids (verify per instance): project status 76 Open, 81 Closed,
 82 Deleted, 83 Canceled; project type 97 Strategic Consulting, 98 Software
 Maintenance, 99 Software Development, 2501 Gantt, 100 Task.
+
+## Ticket attachments
+
+The `intranet-rest` API **cannot upload files** — attachments in ]po[ live in
+the `intranet-filestorage` directory tree, which ]po[ reads live off disk. When
+the server runs **on the ]po[ host** (HTTP transport) as the same OS user that
+runs ]po[, it writes a ticket's file straight into
+`<PO_TICKET_FILESTORE_PATH>/<company_path>/<project_nr>` and ]po[ then shows it
+on the ticket. This feature is therefore **HTTP-deploy only** and is disabled
+unless `PO_TICKET_FILESTORE_PATH` is set (e.g. `/web/projop/filestorage/tickets`,
+]po['s `TicketBasePathUnix`). It also needs `PO_ALLOW_WRITES=true`. Max size is
+`PO_FILESTORE_MAX_MB` (default 25).
+
+Two ways to upload, by file size:
+
+- **`attach_ticket_document` tool** (discoverable in `tools/list`): pass
+  `ticket_id`, `filename`, and **either** `url` (fetched server-side — preferred,
+  no payload bloat) **or** `content_base64` (small local files only). MCP tool
+  inputs are JSON, so binary must be base64 — keep this for small files.
+
+- **Multipart HTTP endpoint** (for large binaries, outside the MCP channel):
+  `POST /mcp/tickets/{ticket_id}/attachments` with `multipart/form-data` field
+  `file`. Authenticated by the same pass-through Basic auth. Returns
+  `201 {"stored", "bytes", "filename"}`.
+
+```bash
+# Large file via the multipart endpoint (note nginx client_max_body_size).
+curl -s -u 'user@soltea.it:<pass>' \
+  -F 'file=@./report.pdf' \
+  https://projectopen.soltea.it/mcp/tickets/68751/attachments
+```
+
+> MCP itself has no standardized client→server file-upload primitive yet
+> (`resources` are download-only; tool inputs are JSON). The multipart endpoint
+> is intentionally out-of-band. A native discoverable upload (binary elicitation,
+> tool file inputs) is a work-in-progress MCP proposal.
 
 ## Logging
 

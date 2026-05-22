@@ -2,17 +2,23 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import calendar
 import logging
 import os
 import re
+import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
+import httpx
 from dotenv import find_dotenv, load_dotenv
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 from .auth import current_credentials
 from .client import ClientConfig, ProjectOpenClient, ProjectOpenError
@@ -775,8 +781,249 @@ async def update_ticket(
 
 
 # ---------------------------------------------------------------------------
+# Ticket attachments (filestorage)
+# ---------------------------------------------------------------------------
+#
+# ]po['s REST API cannot upload files: attachments live in the
+# intranet-filestorage directory tree, which ]po[ reads live off disk ("no
+# magic"). This server is co-located with ]po[ (HTTP transport on the ]po[ host)
+# and runs as the same OS user that runs ]po[ and owns the filestorage, so it
+# writes a ticket's file straight into
+#     <PO_TICKET_FILESTORE_PATH>/<company_path>/<project_nr>
+# (mirrors ]po['s im_filestorage_ticket_path) and ]po[ then shows it on the
+# ticket. HTTP-deploy only — there is no such filesystem under stdio/dev, hence
+# the explicit PO_TICKET_FILESTORE_PATH gate.
+
+def _ticket_filestore_base() -> str:
+    base = os.environ.get("PO_TICKET_FILESTORE_PATH", "").strip()
+    if not base:
+        raise ProjectOpenError(
+            "Ticket attachments are not configured. Set PO_TICKET_FILESTORE_PATH "
+            "to ]po['s TicketBasePathUnix (e.g. /web/projop/filestorage/tickets). "
+            "Attachments only work on the ]po[ host (HTTP transport)."
+        )
+    return base.rstrip("/")
+
+
+def _attachment_max_bytes() -> int:
+    return int(os.environ.get("PO_FILESTORE_MAX_MB", "25")) * 1024 * 1024
+
+
+def _safe_filename(name: str) -> str:
+    """Reduce an arbitrary filename to a single safe path component."""
+    base = os.path.basename((name or "").replace("\\", "/")).strip()
+    if not base or base in {".", ".."} or "/" in base or "\x00" in base:
+        raise ProjectOpenError(f"Invalid attachment filename: {name!r}")
+    return base
+
+
+def _first_record(payload: Any) -> dict[str, Any]:
+    """Pull the single object out of a ]po[ REST envelope (``data`` is a list)."""
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if isinstance(data, list):
+        if not data:
+            raise ProjectOpenError("Object not found.")
+        return data[0]
+    if isinstance(data, dict):
+        return data
+    raise ProjectOpenError("Unexpected REST response shape.")
+
+
+async def _resolve_ticket_dir(c: ProjectOpenClient, ticket_id: int) -> str:
+    """On-disk filestorage folder for a ticket: ``<base>/<company_path>/<project_nr>``.
+
+    ``company_path`` is a filesystem-safe slug on im_company; ``project_nr`` is the
+    ticket's number (a ticket is an im_project subtype).
+    """
+    base = _ticket_filestore_base()
+    ticket = _first_record(await c.get_object("im_ticket", ticket_id))
+    project_nr = str(ticket.get("project_nr") or "").strip()
+    company_id = ticket.get("company_id")
+    if not project_nr:
+        raise ProjectOpenError(f"Ticket {ticket_id} has no project_nr.")
+    if not company_id:
+        raise ProjectOpenError(f"Ticket {ticket_id} has no company_id.")
+    company = _first_record(await c.get_object("im_company", company_id))
+    company_path = str(company.get("company_path") or "").strip()
+    if not company_path:
+        raise ProjectOpenError(
+            f"Company {company_id} has no company_path; cannot place the file."
+        )
+    for part in (company_path, project_nr):
+        if "/" in part or "\\" in part or ".." in part or "\x00" in part:
+            raise ProjectOpenError("Unexpected path component in ticket/company data.")
+    # POSIX path: the filestorage always lives on the (Linux) ]po[ host.
+    return f"{base}/{company_path}/{project_nr}"
+
+
+def _write_attachment(target_dir: str, filename: str, content: bytes) -> dict[str, Any]:
+    """Atomically write ``content`` into ``target_dir/filename``, creating dirs.
+
+    ]po[ does not pre-create a ticket's folder (it appears on first upload), so we
+    create the tree to match ]po['s convention (dirs 0775, files 0664). Owner is
+    the service user (== ]po['s user), so ]po[ can read what we write.
+    """
+    max_bytes = _attachment_max_bytes()
+    if len(content) > max_bytes:
+        raise ProjectOpenError(
+            f"Attachment is {len(content)} bytes, over the {max_bytes}-byte limit "
+            "(PO_FILESTORE_MAX_MB)."
+        )
+    os.makedirs(target_dir, exist_ok=True)
+    try:
+        os.chmod(target_dir, 0o775)
+    except OSError:
+        pass
+    file_mode = int(os.environ.get("PO_FILESTORE_FILE_MODE", "664"), 8)
+    final_path = os.path.join(target_dir, filename)
+    fd, tmp = tempfile.mkstemp(dir=target_dir, prefix=".upload-")
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(content)
+        os.chmod(tmp, file_mode)
+        os.replace(tmp, final_path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    return {"stored": final_path, "bytes": len(content), "filename": filename}
+
+
+async def _download_attachment(url: str) -> bytes:
+    """Fetch an http(s) URL server-side, enforcing the size limit."""
+    if not re.match(r"^https?://", url, re.IGNORECASE):
+        raise ProjectOpenError("Only http(s) URLs are allowed for attachments.")
+    max_bytes = _attachment_max_bytes()
+    timeout = float(os.environ.get("PO_TIMEOUT", "30"))
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as http:
+        resp = await http.get(url)
+        resp.raise_for_status()
+        content = resp.content
+    if len(content) > max_bytes:
+        raise ProjectOpenError(
+            f"Downloaded file is {len(content)} bytes, over the {max_bytes}-byte "
+            "limit (PO_FILESTORE_MAX_MB)."
+        )
+    return content
+
+
+@mcp.tool()
+async def attach_ticket_document(
+    ticket_id: int,
+    filename: str,
+    url: str | None = None,
+    content_base64: str | None = None,
+) -> Any:
+    """Attach a document to a helpdesk ticket.
+
+    ]po['s REST API cannot upload files; attachments live in the filestorage
+    directory tree that this co-located server writes into directly. The file is
+    placed in ``<PO_TICKET_FILESTORE_PATH>/<company_path>/<project_nr>`` and shows
+    up on the ticket in ]po[.
+
+    Provide exactly one source:
+      * ``url`` — fetched server-side (no MCP payload bloat; preferred).
+      * ``content_base64`` — base64-encoded bytes, for small local files only.
+
+    For large binaries prefer the multipart HTTP endpoint
+    ``POST /mcp/tickets/{ticket_id}/attachments`` (form field ``file``), which
+    carries the bytes outside the MCP channel.
+
+    Requires ``PO_ALLOW_WRITES=true`` and ``PO_TICKET_FILESTORE_PATH`` set (HTTP
+    deploy on the ]po[ host only). Size capped by ``PO_FILESTORE_MAX_MB``.
+    """
+    _require_writes("attach_ticket_document", ticket_id=ticket_id, filename=filename)
+    if (url is None) == (content_base64 is None):
+        raise ProjectOpenError("Provide exactly one of `url` or `content_base64`.")
+    safe = _safe_filename(filename)
+    _ticket_filestore_base()  # fail fast if unconfigured, before any REST call
+    async with _client() as c:
+        target_dir = await _resolve_ticket_dir(c, ticket_id)
+        if content_base64 is not None:
+            try:
+                content = base64.b64decode(content_base64, validate=True)
+            except (binascii.Error, ValueError) as exc:
+                raise ProjectOpenError(f"Invalid base64 content: {exc}") from exc
+        else:
+            content = await _download_attachment(url)  # type: ignore[arg-type]
+    result = _write_attachment(target_dir, safe, content)
+    logger.info(
+        "attach_ticket_document ticket=%s stored=%s bytes=%s by=%s",
+        ticket_id,
+        result["stored"],
+        result["bytes"],
+        _acting_user(),
+    )
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Transports
 # ---------------------------------------------------------------------------
+
+@mcp.custom_route("/mcp/tickets/{ticket_id}/attachments", methods=["POST"])
+async def upload_ticket_attachment(request: Request) -> JSONResponse:
+    """Multipart upload of a document to a ticket's filestorage folder.
+
+    The high-throughput sibling of the ``attach_ticket_document`` tool: the file
+    bytes travel as ``multipart/form-data`` (field ``file``) outside the MCP
+    JSON-RPC channel. Authenticated by ``PassThroughAuthMiddleware`` (Basic ->
+    validated against ]po[), which also populates the credentials contextvar the
+    REST lookups here rely on. Returns 201 with ``{stored, bytes, filename}``.
+    """
+    try:
+        if not _writes_enabled():
+            return JSONResponse(
+                {"error": "writes_disabled",
+                 "message": "Set PO_ALLOW_WRITES=true to enable."},
+                status_code=403,
+            )
+        try:
+            ticket_id = int(request.path_params["ticket_id"])
+        except (KeyError, ValueError):
+            return JSONResponse(
+                {"error": "bad_ticket_id", "message": "ticket_id must be an integer."},
+                status_code=400,
+            )
+        form = await request.form()
+        upload = form.get("file")
+        if upload is None or not hasattr(upload, "read"):
+            return JSONResponse(
+                {"error": "missing_file",
+                 "message": "multipart field 'file' is required."},
+                status_code=400,
+            )
+        filename = _safe_filename(getattr(upload, "filename", "") or "")
+        content = await upload.read()
+        max_bytes = _attachment_max_bytes()
+        if len(content) > max_bytes:
+            return JSONResponse(
+                {"error": "too_large", "limit_bytes": max_bytes, "bytes": len(content)},
+                status_code=413,
+            )
+        _ticket_filestore_base()
+        async with _client() as c:
+            target_dir = await _resolve_ticket_dir(c, ticket_id)
+        result = _write_attachment(target_dir, filename, content)
+        logger.info(
+            "upload_ticket_attachment ticket=%s stored=%s bytes=%s by=%s",
+            ticket_id,
+            result["stored"],
+            result["bytes"],
+            _acting_user(),
+        )
+        return JSONResponse(result, status_code=201)
+    except ProjectOpenError as exc:
+        logger.warning("upload_ticket_attachment error: %s", exc)
+        return JSONResponse(
+            {"error": "attachment_failed", "message": str(exc)}, status_code=400
+        )
+    except Exception as exc:  # noqa: BLE001 - last-resort guard for the HTTP route
+        logger.exception("upload_ticket_attachment unexpected error")
+        return JSONResponse({"error": "internal", "message": str(exc)}, status_code=500)
+
 
 def build_http_app():
     """Return the streamable-HTTP ASGI app wrapped with pass-through auth."""
